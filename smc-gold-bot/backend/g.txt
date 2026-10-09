@@ -1,0 +1,145 @@
+// ارسال اسکرین‌شات چارت به Gemini Vision و دریافت سیگنال ساختاریافته SMC
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+
+const SYSTEM_PROMPT = `
+تو یک تحلیل‌گر فنی طلا (XAUUSD) هستی که ترکیب Smart Money Concepts (SMC) و
+Price Action معامله می‌کنی. تصویر ارسالی نمودار کندلی تایم‌فریم M15 است
+(تایم‌فریم اصلی تصمیم‌گیری) و علاوه بر آن، آخرین کندل‌های تایم‌فریم M5 هم
+به‌صورت متنی (JSON) در ادامه همین پیام داده می‌شه.
+
+مفاهیمی که باید بررسی کنی:
+- Market Structure در M15: تشخیص BOS (Break of Structure) و CHoCH (Change of Character)
+- Order Blocks: آخرین کندل مخالف قبل از حرکت قوی، در M15
+- Fair Value Gap (FVG): شکاف قیمتی بین سه کندل متوالی
+- Liquidity: نواحی جمع‌آوری نقدینگی بالای سقف‌های اخیر / زیر کف‌های اخیر (equal highs/lows, swing points)
+- Fibonacci: از آخرین سوئینگ معتبر (impulse leg) فیبوناچی بکش و نواحی بازگشتی
+  38.2% تا 61.8% (و در صورت نیاز تا 78.6%) رو به‌عنوان ناحیه احتمالی ورود در نظر بگیر،
+  به‌خصوص وقتی با Order Block یا FVG هم‌پوشانی داره
+- Premium / Discount zone نسبت به آخرین رنج قیمتی
+
+قانون هم‌راستایی چند تایم‌فریمی (مهم‌ترین بخش):
+تایم‌فریم M15 مرجع اصلی جهت (bias) است. کندل‌های M5 فقط برای گرفتن تأیید دقیق‌تر
+نقطه ورود و ساختار لحظه‌ای استفاده میشن. یک سیگنال buy یا sell فقط زمانی معتبره که:
+۱) جهت ساختار M15 با جهت سیگنال هم‌خونی داشته باشه (خلاف روند M15 سیگنال نده مگر CHoCH واضح باشه)
+۲) حداقل دو مورد از (Order Block, FVG, Liquidity sweep, ناحیه فیبوناچی) هم‌پوشانی داشته باشن
+۳) رفتار کندل‌های M5 اخیر (در JSON پیوست) این ناحیه رو تأیید کنه (مثلاً واکنش قیمتی، rejection wick)
+
+اگر هر کدوم از این سه شرط برقرار نبود، direction را "wait" برگردون. کیفیت مهم‌تر
+از تعداده - فقط سیگنال‌های با اطمینان واقعاً بالا (confidence >= 0.8) رو buy/sell بده.
+اگه مطمئن نیستی یا شواهد ضعیفه، حتماً wait برگردون و confidence رو پایین گزارش کن؛
+عدد اطمینان باید صادقانه باشه، نه خوش‌بینانه.
+
+فقط و فقط یک JSON خام و معتبر برگردون، بدون هیچ متن اضافه، بدون backtick,
+دقیقاً با این ساختار:
+
+{
+  "direction": "buy" | "sell" | "wait",
+  "entry": number,
+  "stop_loss": number,
+  "take_profit": number,
+  "confidence": number,
+  "reason": "توضیح کوتاه به فارسی، حداکثر دو جمله - شامل کدام مفاهیم هم‌راستا بودن"
+}
+
+اگر direction برابر wait بود، entry/stop_loss/take_profit را برابر 0 بذار.
+confidence باید عددی بین 0 تا 1 باشه.
+`.trim();
+
+function stripDataUrlPrefix(dataUrl) {
+  const commaIdx = dataUrl.indexOf(',');
+  return commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+}
+
+function safeParseJson(text) {
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url, options, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, options);
+
+    // فقط برای خطاهای موقت سمت گوگل (503 شلوغی، 429 محدودیت نرخ) دوباره امتحان کن
+    if ((res.status === 503 || res.status === 429) && attempt < retries) {
+      const delay = 1500 * (attempt + 1); // 1.5s, 3s
+      await sleep(delay);
+      continue;
+    }
+
+    return res;
+  }
+}
+
+async function analyzeChart(chartFrameDataUrl, currentPrice, m5Candles = []) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY تنظیم نشده است');
+  }
+
+  const base64Image = stripDataUrlPrefix(chartFrameDataUrl);
+
+  const priceText = currentPrice
+    ? `قیمت لحظه‌ای فعلی XAUUSD: ${currentPrice}`
+    : 'قیمت لحظه‌ای در دسترس نیست.';
+
+  const m5Sample = m5Candles.slice(-30).map((c) => ({
+    t: c.time, o: c.open, h: c.high, l: c.low, c: c.close,
+  }));
+
+  const userText = `${priceText}
+
+کندل‌های M5 اخیر (برای تأیید نقطه ورود، جدیدترین در انتها):
+${JSON.stringify(m5Sample)}`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+  const res = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: `${SYSTEM_PROMPT}\n\n${userText}` },
+            { inline_data: { mime_type: 'image/jpeg', data: base64Image } },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        response_mime_type: 'application/json',
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`خطای Gemini API (${res.status}): ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  if (!text) {
+    throw new Error('پاسخ Gemini خالی یا نامعتبر بود');
+  }
+
+  const parsed = safeParseJson(text);
+
+  return {
+    direction: (parsed.direction || 'wait').toLowerCase(),
+    entry: Number(parsed.entry) || 0,
+    stop_loss: Number(parsed.stop_loss) || 0,
+    take_profit: Number(parsed.take_profit) || 0,
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+    reason: parsed.reason || '',
+  };
+}
+
+module.exports = { analyzeChart };

@@ -1,0 +1,54 @@
+// چک‌های منطقی پایه روی خروجی Gemini، قبل از نمایش برای تأیید کاربر.
+// این جایگزین قضاوت معاملاتی نیست - فقط جلوی خروجی‌های واضحاً نامعتبر
+// (قیمت دور از بازار، حد ضرر خیلی نزدیک/دور) رو می‌گیره.
+
+const MAX_ENTRY_DISTANCE_RATIO = 0.01; // حداکثر ۱٪ فاصله entry از قیمت لحظه‌ای
+const MIN_SL_DISTANCE_RATIO = 0.0005; // حداقل فاصله SL از entry
+const MAX_SL_DISTANCE_RATIO = 0.05; // حداکثر فاصله SL از entry
+
+function validateSignal(signal, currentPrice) {
+  if (!signal || !['buy', 'sell'].includes(signal.direction)) {
+    return { ...signal, direction: 'wait' };
+  }
+
+  const { entry, stop_loss: sl, take_profit: tp, direction } = signal;
+
+  if (!entry || !sl || !tp) {
+    return { ...signal, direction: 'wait', reason: 'خروجی ناقص بود (entry/SL/TP گم است).' };
+  }
+
+  if (currentPrice) {
+    const entryDistance = Math.abs(entry - currentPrice) / currentPrice;
+    if (entryDistance > MAX_ENTRY_DISTANCE_RATIO) {
+      return {
+        ...signal,
+        direction: 'wait',
+        reason: `فاصله قیمت ورود پیشنهادی از قیمت لحظه‌ای غیرمنطقی بود (${(entryDistance * 100).toFixed(2)}%).`,
+      };
+    }
+  }
+
+  const slDistance = Math.abs(entry - sl) / entry;
+  if (slDistance < MIN_SL_DISTANCE_RATIO || slDistance > MAX_SL_DISTANCE_RATIO) {
+    return {
+      ...signal,
+      direction: 'wait',
+      reason: 'فاصله حد ضرر از قیمت ورود غیرمنطقی بود (خیلی نزدیک یا خیلی دور).',
+    };
+  }
+
+  const structureOk =
+    direction === 'buy' ? sl < entry && entry < tp : sl > entry && entry > tp;
+
+  if (!structureOk) {
+    return {
+      ...signal,
+      direction: 'wait',
+      reason: 'ترتیب حد ضرر/ورود/حد سود با جهت سیگنال همخوانی نداشت.',
+    };
+  }
+
+  return signal;
+}
+
+module.exports = { validateSignal };

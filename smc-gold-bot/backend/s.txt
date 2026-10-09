@@ -1,0 +1,279 @@
+require('dotenv').config();
+
+const path = require('path');
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const bridge = require('./services/bridge');
+const { analyzeChart } = require('./services/gemini');
+const { validateSignal } = require('./services/riskValidator');
+
+const PORT = process.env.PORT || 3000;
+const ACCOUNT_POLL_MS = Number(process.env.ACCOUNT_POLL_MS || 3000);
+const ANALYSIS_INTERVAL_MS = Number(process.env.ANALYSIS_INTERVAL_MS || 20000);
+const MAX_DAILY_SIGNALS = Number(process.env.MAX_DAILY_SIGNALS || 20);
+const CONFIDENCE_THRESHOLD = Number(process.env.CONFIDENCE_THRESHOLD || 0.8);
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------------------------------------------------------------------------
+// وضعیت کلی (سیستم تک‌کاربره‌ست، پس یک state سراسری کافیه)
+// ---------------------------------------------------------------------------
+const state = {
+  botActive: false,
+  volume: 0.1,
+  lastFrames: { M15: null },
+  lastPrice: null,
+  activeSignal: null, // { id, direction, entry, stop_loss, take_profit, ... }
+  accountTimer: null,
+  analysisTimer: null,
+  dailySignalDate: null, // 'YYYY-MM-DD' محلی
+  dailySignalCount: 0,
+};
+
+function resetDailyCounterIfNeeded() {
+  const today = new Date().toDateString();
+  if (state.dailySignalDate !== today) {
+    state.dailySignalDate = today;
+    state.dailySignalCount = 0;
+  }
+}
+
+function emitDailyStats() {
+  io.emit('daily-stats', { count: state.dailySignalCount, max: MAX_DAILY_SIGNALS });
+}
+
+function log(message) {
+  const time = new Date().toLocaleTimeString('fa-IR');
+  console.log(`[${time}] ${message}`);
+  io.emit('new-log', { time, message });
+}
+
+// ---------------------------------------------------------------------------
+// حلقه به‌روزرسانی حساب / قیمت / پوزیشن‌ها / کندل‌ها
+// ---------------------------------------------------------------------------
+let candlesCache = []; // M15 - برای نمایش روی چارت
+let m5CandlesCache = []; // M5 - فقط برای تأیید در تحلیل، روی چارت نمایش داده نمی‌شه
+
+async function pollAccount() {
+  try {
+    const [account, priceData, positions] = await Promise.all([
+      bridge.getAccount(),
+      bridge.getPrice(),
+      bridge.getPositions(),
+    ]);
+
+    state.lastPrice = priceData.ask;
+    await Promise.all([refreshCandles(), refreshM5Candles()]);
+
+    io.emit('account-update', {
+      balance: account.balance,
+      equity: account.equity,
+      freeMargin: account.free_margin,
+      bid: priceData.bid,
+      ask: priceData.ask,
+      positions,
+      candles: candlesCache,
+    });
+  } catch (err) {
+    log(`خطا در دریافت وضعیت حساب: ${err.message}`);
+  }
+}
+
+async function refreshCandles() {
+  try {
+    const raw = await bridge.getCandles('M15', 200);
+    candlesCache = raw.map((c) => ({
+      time: Math.floor(new Date(c.time).getTime() / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+  } catch (err) {
+    log(`خطا در دریافت کندل‌های M15: ${err.message}`);
+  }
+}
+
+async function refreshM5Candles() {
+  try {
+    const raw = await bridge.getCandles('M5', 60);
+    m5CandlesCache = raw.map((c) => ({
+      time: Math.floor(new Date(c.time).getTime() / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+  } catch (err) {
+    log(`خطا در دریافت کندل‌های M5: ${err.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// حلقه تحلیل با Gemini
+// ---------------------------------------------------------------------------
+async function runAnalysis() {
+  if (!state.lastFrames.M15 || !m5CandlesCache.length) return;
+
+  resetDailyCounterIfNeeded();
+
+  if (state.dailySignalCount >= MAX_DAILY_SIGNALS) {
+    log(`به سقف روزانه سیگنال‌های معتبر رسیدیم (${MAX_DAILY_SIGNALS} سیگنال). تحلیل تا فردا متوقف می‌مونه.`);
+    return;
+  }
+
+  try {
+    const raw = await analyzeChart(
+      { m15: state.lastFrames.M15, m5Candles: m5CandlesCache },
+      state.lastPrice
+    );
+    let validated = validateSignal(raw, state.lastPrice);
+
+    // اعمال سخت‌گیرانه آستانه اطمینان - مستقل از خوداظهاری مدل
+    if (['buy', 'sell'].includes(validated.direction) && validated.confidence < CONFIDENCE_THRESHOLD) {
+      validated = {
+        ...validated,
+        direction: 'wait',
+        reason: `اطمینان تحلیل (${Math.round(validated.confidence * 100)}٪) زیر آستانه ${Math.round(CONFIDENCE_THRESHOLD * 100)}٪ بود، سیگنال نادیده گرفته شد.`,
+      };
+    }
+
+    const signal = { id: Date.now().toString(), ...validated };
+
+    const isTradeable = ['buy', 'sell'].includes(signal.direction);
+    state.activeSignal = isTradeable ? signal : null;
+
+    if (isTradeable) {
+      state.dailySignalCount += 1;
+      emitDailyStats();
+    }
+
+    io.emit('signal', signal);
+    log(
+      isTradeable
+        ? `سیگنال معتبر ${state.dailySignalCount}/${MAX_DAILY_SIGNALS} امروز: ${signal.direction.toUpperCase()} (اطمینان ${Math.round(signal.confidence * 100)}٪) - در انتظار تأیید`
+        : `تحلیل جدید: بدون سیگنال معتبر. ${signal.reason || ''}`
+    );
+  } catch (err) {
+    log(`خطا در تحلیل Gemini: ${err.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// شروع / توقف ربات
+// ---------------------------------------------------------------------------
+async function startBot() {
+  if (state.botActive) return;
+  state.botActive = true;
+
+  try {
+    await bridge.checkHealth();
+  } catch (err) {
+    state.botActive = false;
+    log(`اتصال به پل پایتون برقرار نشد: ${err.message}`);
+    io.emit('bot-status', { active: false });
+    return;
+  }
+
+  await pollAccount();
+
+  state.accountTimer = setInterval(pollAccount, ACCOUNT_POLL_MS);
+  state.analysisTimer = setInterval(runAnalysis, ANALYSIS_INTERVAL_MS);
+
+  // اولین تحلیل رو زود انجام بده (بعد از ۱۵ ثانیه، وقتی اولین فریم چارت از کلاینت رسیده باشه)
+  // به‌جای اینکه کاربر مجبور باشه تا اولین تیک تایمر دوره‌ای صبر کنه
+  setTimeout(() => runAnalysis(), 15000);
+
+  io.emit('bot-status', { active: true });
+  log('ربات شروع به کار کرد. در حال دریافت داده و تحلیل زنده...');
+}
+
+function stopBot() {
+  if (!state.botActive) return;
+  state.botActive = false;
+
+  clearInterval(state.accountTimer);
+  clearInterval(state.analysisTimer);
+  state.activeSignal = null;
+
+  io.emit('bot-status', { active: false });
+  log('ربات متوقف شد.');
+}
+
+// ---------------------------------------------------------------------------
+// Socket.io
+// ---------------------------------------------------------------------------
+io.on('connection', (socket) => {
+  resetDailyCounterIfNeeded();
+  socket.emit('bot-status', { active: state.botActive });
+  socket.emit('daily-stats', { count: state.dailySignalCount, max: MAX_DAILY_SIGNALS });
+
+  socket.on('start-stream', () => startBot());
+  socket.on('stop-stream', () => stopBot());
+
+  socket.on('update-config', (cfg) => {
+    if (typeof cfg?.volume === 'number' && cfg.volume > 0) {
+      state.volume = cfg.volume;
+    }
+  });
+
+  socket.on('chart-frame', ({ timeframe, data }) => {
+    if (timeframe === 'M15') {
+      state.lastFrames.M15 = data;
+    }
+  });
+
+  socket.on('signal-response', async ({ id, action, volume }) => {
+    const signal = state.activeSignal;
+
+    if (!signal || signal.id !== id) {
+      log('این سیگنال دیگر معتبر نیست (منقضی یا قبلاً پاسخ داده شده).');
+      return;
+    }
+
+    state.activeSignal = null;
+
+    if (action === 'reject') {
+      log(`سیگنال ${signal.direction.toUpperCase()} توسط کاربر رد شد.`);
+      return;
+    }
+
+    const finalVolume = volume || state.volume;
+
+    try {
+      const result = await bridge.placeOrder({
+        direction: signal.direction,
+        volume: finalVolume,
+        stop_loss: signal.stop_loss,
+        take_profit: signal.take_profit,
+        comment: 'smc-gemini-bot',
+      });
+      log(`سفارش اجرا شد: ${signal.direction.toUpperCase()} ${finalVolume} لات @ ${result.price} (تیکت ${result.order_id})`);
+      await pollAccount();
+    } catch (err) {
+      log(`اجرای سفارش ناموفق بود: ${err.message}`);
+    }
+  });
+
+  socket.on('close-position', async ({ id }) => {
+    if (!id) return;
+    try {
+      const result = await bridge.closePosition(id);
+      log(`پوزیشن #${result.ticket} به‌صورت دستی بسته شد @ ${result.price}`);
+      await pollAccount();
+    } catch (err) {
+      log(`بستن پوزیشن #${id} ناموفق بود: ${err.message}`);
+    }
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`سرور روی پورت ${PORT} در حال اجراست`);
+  console.log(`داشبورد: http://localhost:${PORT}`);
+});

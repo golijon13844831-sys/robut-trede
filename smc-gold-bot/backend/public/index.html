@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>میز معامله‌گری SMC · XAUUSD · پرو</title>
+
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+
+<link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#0a0a09; --panel:#121110; --elevated:#1a1815;
+    --border:#2a2722; --border-strong:#3d3830;
+    --gold:#c9a227; --gold-bright:#e8c468; --gold-dim:#8a6f24;
+    --teal:#2fa88c; --red:#b2453a;
+    --text:#ece7d8; --text-dim:#8c8577; --text-faint:#524d43;
+    --font-fa:'Vazirmatn',sans-serif;
+    --font-display:'Oswald',sans-serif;
+    --font-mono:'IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:var(--bg);color:var(--text);font-family:var(--font-fa);min-height:100vh;
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(201,162,39,0.05), transparent 40%),
+      radial-gradient(circle at 100% 100%, rgba(47,168,140,0.04), transparent 45%);
+  }
+  .num{font-family:var(--font-mono);direction:ltr;unicode-bidi:isolate;display:inline-block;}
+
+  .ticker{display:flex;align-items:center;gap:28px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--panel);flex-wrap:wrap;}
+  .ticker-brand{font-family:var(--font-display);font-weight:600;letter-spacing:.06em;font-size:15px;color:var(--gold-bright);display:flex;align-items:center;gap:8px;}
+  .rec-dot{width:7px;height:7px;border-radius:50%;background:var(--text-faint);flex-shrink:0;}
+  .rec-dot.live{background:var(--teal);box-shadow:0 0 0 0 rgba(47,168,140,.6);animation:pulse 1.8s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,168,140,.55);}70%{box-shadow:0 0 0 7px rgba(47,168,140,0);}100%{box-shadow:0 0 0 0 rgba(47,168,140,0);}}
+  .ticker-fields{display:flex;gap:22px;margin-inline-end:auto;flex-wrap:wrap;}
+  .tfield{display:flex;flex-direction:column;gap:2px;}
+  .tfield .lbl{font-size:10px;letter-spacing:.08em;color:var(--text-faint);text-transform:uppercase;}
+  .tfield .val{font-size:15px;font-weight:500;color:var(--text);}
+  .status-chip{font-family:var(--font-display);font-size:11px;letter-spacing:.05em;padding:6px 14px;border:1px solid var(--border-strong);border-radius:2px;display:flex;align-items:center;gap:8px;color:var(--text-dim);}
+  .status-chip.active{color:var(--teal);border-color:var(--teal);}
+
+  .layout{display:grid;grid-template-columns:1fr 340px;gap:1px;background:var(--border);}
+  @media(max-width:980px){.layout{grid-template-columns:1fr;}}
+  .col-main,.col-side{background:var(--bg);display:flex;flex-direction:column;gap:1px;}
+  .panel{background:var(--panel);padding:20px 22px;}
+  .panel + .panel{border-top:1px solid var(--border);}
+  .panel-title{font-family:var(--font-display);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+  .panel-title .rule{flex:1;height:1px;background:var(--border-strong);}
+
+  .stats-row{display:flex;}
+  .stat{flex:1;padding:0 20px;}
+  .stat:not(:first-child){border-right:1px solid var(--border);}
+  .stat .lbl{font-size:11px;color:var(--text-faint);letter-spacing:.04em;}
+  .stat .val{font-family:var(--font-mono);font-size:22px;font-weight:500;margin-top:4px;}
+  .stat.equity .val{color:var(--teal);}
+  .stat.margin .val{color:var(--gold-bright);}
+
+  .chart-frame{position:relative;padding:18px;}
+  .bracket{position:absolute;width:16px;height:16px;border-color:var(--gold-dim);opacity:.7;}
+  .bracket.tl{top:6px;left:6px;border-top:1.5px solid;border-right:1.5px solid;}
+  .bracket.tr{top:6px;right:6px;border-top:1.5px solid;border-left:1.5px solid;}
+  .bracket.bl{bottom:6px;left:6px;border-bottom:1.5px solid;border-right:1.5px solid;}
+  .bracket.br{bottom:6px;right:6px;border-bottom:1.5px solid;border-left:1.5px solid;}
+  #chart{width:100%;height:420px;background:var(--elevated);}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  thead th{text-align:right;font-weight:400;color:var(--text-faint);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding-bottom:10px;border-bottom:1px solid var(--border-strong);}
+  tbody td{padding:10px 4px;border-bottom:1px solid var(--border);color:var(--text-dim);}
+  tbody tr:last-child td{border-bottom:none;}
+  .side-buy{color:var(--teal);font-weight:500;}
+  .side-sell{color:var(--red);font-weight:500;}
+  .pnl-pos{color:var(--teal);}
+  .pnl-neg{color:var(--red);}
+  .empty-row td{text-align:center;color:var(--text-faint);padding:24px 0;}
+  .close-btn{font-family:var(--font-display);font-size:10.5px;letter-spacing:.04em;padding:5px 10px;border:1px solid var(--border-strong);background:transparent;color:var(--text-dim);cursor:pointer;}
+  .close-btn:hover:not(:disabled){border-color:var(--red);color:var(--red);}
+  .close-btn:disabled{opacity:.4;cursor:not-allowed;}
+
+  .gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;margin-bottom:10px;}
+  .gauge-value{font-family:var(--font-mono);font-size:26px;margin-top:-6px;}
+  .gauge-caption{font-size:10.5px;color:var(--text-faint);letter-spacing:.05em;}
+  #needle{transform-origin:100px 100px;transition:transform .6s cubic-bezier(.34,1.56,.64,1);}
+
+  .signal-dir{font-family:var(--font-display);font-size:20px;letter-spacing:.05em;text-align:center;padding:6px 0 14px;}
+  .signal-dir.buy{color:var(--teal);}
+  .signal-dir.sell{color:var(--red);}
+  .signal-dir.wait{color:var(--text-dim);}
+
+  .signal-levels{display:flex;justify-content:space-between;font-size:12px;margin-bottom:12px;padding:10px 12px;background:var(--elevated);border:1px solid var(--border);}
+  .signal-levels div{display:flex;flex-direction:column;gap:3px;align-items:center;}
+  .signal-levels .lbl{color:var(--text-faint);font-size:10px;}
+  .signal-reason{font-size:12px;line-height:1.9;color:var(--text-dim);background:var(--elevated);border:1px solid var(--border);padding:10px 12px;margin-bottom:14px;min-height:44px;}
+
+  .sig-ttl{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--text-faint);margin-bottom:12px;padding:8px 12px;border:1px dashed var(--border-strong);}
+  .sig-ttl .num{color:var(--gold-bright);font-size:13px;}
+
+  .vault-actions{display:flex;gap:10px;}
+  .vault-btn{flex:1;font-family:var(--font-display);font-size:12px;letter-spacing:.06em;padding:12px 8px;border:1px solid var(--border-strong);background:var(--elevated);color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;}
+  .vault-btn:disabled{opacity:.35;cursor:not-allowed;}
+  .vault-btn.approve:not(:disabled):hover{border-color:var(--teal);color:var(--teal);}
+  .vault-btn.decline:not(:disabled):hover{border-color:var(--red);color:var(--red);}
+  .vault-btn:not(:disabled):active{transform:translateY(1px);}
+  .vault-btn svg{width:14px;height:14px;}
+
+  /* ---------- mode switch (سه حالته) ---------- */
+  .mode-switch{display:flex;border:1px solid var(--border-strong);margin-bottom:12px;}
+  .mode-btn{flex:1;padding:9px 4px;font-family:var(--font-display);font-size:10.5px;letter-spacing:.03em;background:transparent;border:none;color:var(--text-faint);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s;}
+  .mode-btn svg{width:13px;height:13px;}
+  .mode-btn.manual.on{color:var(--text);background:rgba(236,231,216,.07);}
+  .mode-btn.auto.on{color:var(--teal);background:rgba(47,168,140,.08);}
+  .mode-btn.signal.on{color:var(--gold-bright);background:rgba(201,162,39,.08);}
+
+  .auto-warning{display:none;align-items:center;gap:8px;margin-bottom:14px;padding:9px 12px;border:1px solid rgba(47,168,140,.35);background:rgba(47,168,140,.06);color:var(--teal);font-size:11.5px;line-height:1.7;}
+  .auto-warning.show{display:flex;}
+  .auto-warning svg{width:15px;height:15px;flex-shrink:0;}
+
+  .signal-only-note{display:none;align-items:center;gap:8px;margin-bottom:14px;padding:9px 12px;border:1px solid rgba(201,162,39,.35);background:rgba(201,162,39,.06);color:var(--gold-bright);font-size:11.5px;line-height:1.7;}
+  .signal-only-note.show{display:flex;}
+  .signal-only-note svg{width:15px;height:15px;flex-shrink:0;}
+
+  /* ---------- prediction panel ---------- */
+  .predict-btn{
+    width:100%;font-family:var(--font-display);font-size:12.5px;letter-spacing:.06em;
+    padding:12px 8px;border:1px solid var(--gold-dim);background:rgba(201,162,39,.07);
+    color:var(--gold-bright);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
+    transition:all .15s;
+  }
+  .predict-btn:hover:not(:disabled){background:rgba(201,162,39,.15);}
+  .predict-btn:disabled{opacity:.5;cursor:wait;}
+  .predict-btn svg{width:15px;height:15px;}
+  .pred-empty{margin-top:12px;text-align:center;font-size:11.5px;color:var(--text-faint);padding:14px 0;border:1px dashed var(--border-strong);}
+  .pred-dir{font-family:var(--font-display);font-size:18px;letter-spacing:.05em;text-align:center;padding:12px 0 10px;}
+  .pred-dir.buy{color:var(--teal);}
+  .pred-dir.sell{color:var(--red);}
+  .pred-dir.wait{color:var(--text-dim);font-size:14px;}
+  .pred-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:10px;}
+  .pred-cell{background:var(--elevated);padding:10px 6px;display:flex;flex-direction:column;gap:4px;align-items:center;}
+  .pred-cell .lbl{font-size:9.5px;color:var(--text-faint);letter-spacing:.05em;}
+  .pred-cell .num{font-size:14px;font-weight:500;}
+  .pred-meta{font-size:11.5px;color:var(--text-dim);line-height:1.8;padding:3px 0;}
+  .pred-meta .lbl{color:var(--text-faint);}
+  .pred-reason{font-size:12px;line-height:1.9;color:var(--text-dim);background:var(--elevated);border:1px solid var(--border);padding:10px 12px;margin:8px 0;}
+  .pred-warn{display:none;font-size:11px;color:var(--gold-bright);border:1px dashed var(--gold-dim);padding:8px 10px;margin-bottom:8px;line-height:1.7;}
+  .pred-warn.show{display:block;}
+  .pred-note{font-size:10px;color:var(--text-faint);line-height:1.8;border-top:1px dashed var(--border);padding-top:8px;margin-top:4px;}
+  .pred-clear{width:100%;margin-top:10px;font-family:var(--font-display);font-size:11px;letter-spacing:.05em;padding:8px;background:transparent;border:1px solid var(--border-strong);color:var(--text-faint);cursor:pointer;}
+  .pred-clear:hover{border-color:var(--red);color:var(--red);}
+
+  /* ---------- settings rows ---------- */
+  .setting-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px dashed var(--border);}
+  .setting-row:last-of-type{border-bottom:none;}
+  .setting-row .name{font-size:12px;color:var(--text);}
+  .setting-row .sub{font-size:10px;color:var(--text-faint);margin-top:2px;}
+  .num-input{width:78px;background:var(--elevated);border:1px solid var(--border-strong);color:var(--text);font-family:var(--font-mono);font-size:12.5px;padding:6px 8px;text-align:center;direction:ltr;}
+  .num-input:focus{outline:none;border-color:var(--gold-dim);}
+
+  .toggle{width:38px;height:20px;border:1px solid var(--border-strong);background:var(--elevated);position:relative;cursor:pointer;flex-shrink:0;}
+  .toggle .knob{position:absolute;top:2px;right:2px;width:14px;height:14px;background:var(--text-faint);transition:all .18s;}
+  .toggle.on{border-color:var(--teal);}
+  .toggle.on .knob{right:20px;background:var(--teal);}
+  .settings-note{font-size:10px;color:var(--text-faint);margin-top:10px;text-align:center;letter-spacing:.03em;}
+
+  .perf-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);}
+  .perf-cell{background:var(--elevated);padding:12px 14px;display:flex;flex-direction:column;gap:4px;}
+  .perf-cell .lbl{font-size:10px;color:var(--text-faint);letter-spacing:.05em;}
+  .perf-cell .val{font-family:var(--font-mono);font-size:17px;}
+
+  .lot-dial{display:flex;align-items:stretch;border:1px solid var(--border-strong);}
+  .lot-step{width:42px;background:var(--elevated);border:none;color:var(--gold-bright);font-family:var(--font-display);font-size:18px;cursor:pointer;}
+  .lot-step:hover:not(:disabled){background:#211e18;}
+  .lot-step:disabled{opacity:.35;cursor:not-allowed;}
+  .lot-readout{flex:1;text-align:center;background:repeating-linear-gradient(90deg,var(--bg) 0 1px,var(--panel) 1px 8px);display:flex;align-items:center;justify-content:center;}
+  .lot-readout .num{font-size:19px;font-weight:500;letter-spacing:.03em;}
+  .lot-caption{font-size:10px;color:var(--text-faint);letter-spacing:.05em;text-align:center;margin-top:6px;line-height:1.7;}
+
+  .run-row{display:flex;gap:10px;margin-top:16px;}
+  .run-btn{flex:1;font-family:var(--font-display);font-size:12px;letter-spacing:.06em;padding:11px 8px;border:1px solid var(--border-strong);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;background:transparent;}
+  .run-btn.start{color:var(--teal);}
+  .run-btn.start:hover{background:rgba(47,168,140,.08);}
+  .run-btn.stop{color:var(--red);}
+  .run-btn.stop:hover{background:rgba(178,69,58,.08);}
+  .run-btn svg{width:13px;height:13px;}
+
+  .log-feed{height:150px;overflow-y:auto;font-family:var(--font-mono);font-size:11px;background:var(--elevated);border:1px solid var(--border);padding:10px 12px;direction:ltr;text-align:left;color:var(--text-dim);}
+  .log-feed div{padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .log-feed .t{color:var(--text-faint);}
+
+  #toasts{position:fixed;bottom:18px;left:18px;display:flex;flex-direction:column;gap:8px;z-index:999;max-width:340px;}
+  .toast{background:var(--elevated);border:1px solid var(--border-strong);border-right:3px solid var(--gold);padding:11px 14px;font-size:12px;line-height:1.7;box-shadow:0 6px 18px rgba(0,0,0,.45);animation:slideIn .25s ease;color:var(--text);}
+  .toast.danger{border-right-color:var(--red);}
+  .toast.success{border-right-color:var(--teal);}
+  .toast.out{opacity:0;transition:opacity .3s;}
+  @keyframes slideIn{from{transform:translateX(-12px);opacity:0;}to{transform:none;opacity:1;}}
+</style>
+</head>
+<body>
+
+<div id="toasts"></div>
+
+<div class="ticker">
+  <div class="ticker-brand"><span class="rec-dot" id="rec-dot"></span> SMC · XAUUSD</div>
+  <div class="ticker-fields">
+    <div class="tfield"><span class="lbl">Bid</span><span class="val num" id="tk-bid">--</span></div>
+    <div class="tfield"><span class="lbl">Ask</span><span class="val num" id="tk-ask">--</span></div>
+    <div class="tfield"><span class="lbl">اسپرد</span><span class="val num" id="tk-spread">--</span></div>
+    <div class="tfield"><span class="lbl">سیگنال امروز</span><span class="val num" id="tk-daily">0/20</span></div>
+  </div>
+  <div class="status-chip" id="status-badge">غیرفعال</div>
+</div>
+
+<div class="layout">
+  <div class="col-main">
+
+    <div class="panel">
+      <div class="stats-row">
+        <div class="stat"><div class="lbl">موجودی</div><div class="val num" id="balance">$0.00</div></div>
+        <div class="stat equity"><div class="lbl">ارزش کل</div><div class="val num" id="equity">$0.00</div></div>
+        <div class="stat margin"><div class="lbl">مارجین آزاد</div><div class="val num" id="freeMargin">$0.00</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">نمودار قیمت زنده · M15<span class="rule"></span></div>
+      <div class="chart-frame">
+        <span class="bracket tl"></span><span class="bracket tr"></span>
+        <span class="bracket bl"></span><span class="bracket br"></span>
+        <div id="chart"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">پوزیشن‌های فعال<span class="rule"></span></div>
+      <table>
+        <thead>
+          <tr><th>تیکت</th><th>نوع</th><th>حجم</th><th>ورود</th><th>حد ضرر</th><th>سود / زیان</th><th>عملیات</th></tr>
+        </thead>
+        <tbody id="positions-list">
+          <tr class="empty-row"><td colspan="7">پوزیشنی باز نیست</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <div class="col-side">
+
+    <div class="panel">
+      <div class="panel-title">سیگنال هوش مصنوعی<span class="rule"></span></div>
+
+      <div class="gauge-wrap">
+        <svg width="140" height="80" viewBox="0 0 200 110">
+          <path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="var(--border-strong)" stroke-width="3"/>
+          <path id="gauge-fill" d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="var(--text-faint)" stroke-width="3" stroke-dasharray="251" stroke-dashoffset="251"/>
+          <line id="needle" x1="100" y1="100" x2="100" y2="30" stroke="var(--gold-bright)" stroke-width="2.5" style="transform:rotate(-90deg)"/>
+          <circle cx="100" cy="100" r="4" fill="var(--gold-bright)"/>
+        </svg>
+        <div class="gauge-value num" id="conf-val">--%</div>
+        <div class="gauge-caption">اطمینان تحلیل</div>
+      </div>
+
+      <div class="signal-dir wait" id="signal-dir">در انتظار سیگنال</div>
+
+      <div class="signal-levels">
+        <div><span class="lbl">ورود</span><span class="num" id="sig-entry">--</span></div>
+        <div><span class="lbl">حد ضرر</span><span class="num" id="sig-sl">--</span></div>
+        <div><span class="lbl">حد سود</span><span class="num" id="sig-tp">--</span></div>
+      </div>
+
+      <div class="signal-reason" id="sig-reason">در انتظار دریافت فریم چارت...</div>
+
+      <div class="sig-ttl" id="sig-ttl-row" style="display:none;">
+        <span>مهلت پاسخ به سیگنال</span>
+        <span class="num" id="sig-ttl">--</span>
+      </div>
+
+      <div class="vault-actions" id="vault-actions">
+        <button class="vault-btn approve" id="btn-approve" disabled onclick="respondSignal('approve')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12l5 5L20 6"/></svg>
+          تأیید و اجرا
+        </button>
+        <button class="vault-btn decline" id="btn-decline" disabled onclick="respondSignal('reject')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          رد سیگنال
+        </button>
+      </div>
+
+      <div class="signal-only-note" id="signal-only-note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+        <span>حالت «فقط تحلیل» فعال است؛ سیگنال‌ها فقط نمایش داده می‌شوند و هیچ سفارشی به MT5 ارسال نمی‌شود.</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">پیش‌بینی معامله پر سود<span class="rule"></span></div>
+
+      <button class="predict-btn" id="btn-predict" onclick="requestPrediction()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <span>جست‌وجوی ستاپ پر سود</span>
+      </button>
+
+      <div class="pred-empty" id="pred-empty">هنوز پیش‌بینی‌ای انجام نشده — دکمه بالا را بزن</div>
+
+      <div id="pred-body" style="display:none;">
+        <div class="pred-dir wait" id="pred-dir">--</div>
+
+        <div class="pred-grid">
+          <div class="pred-cell"><span class="lbl">نقطه ورود</span><span class="num" id="pred-entry">--</span></div>
+          <div class="pred-cell"><span class="lbl">حد ضرر</span><span class="num" id="pred-sl">--</span></div>
+          <div class="pred-cell"><span class="lbl">حد سود</span><span class="num" id="pred-tp">--</span></div>
+          <div class="pred-cell"><span class="lbl">هدف دوم</span><span class="num" id="pred-tp2">--</span></div>
+          <div class="pred-cell"><span class="lbl">سود/ضرر</span><span class="num" id="pred-rr">--</span></div>
+          <div class="pred-cell"><span class="lbl">اطمینان</span><span class="num" id="pred-conf">--</span></div>
+        </div>
+
+        <div class="pred-meta"><span class="lbl">نوع ورود:</span> <span id="pred-type">--</span></div>
+        <div class="pred-meta"><span class="lbl">بازه زمانی انتظار:</span> <span id="pred-dur">--</span></div>
+        <div class="pred-meta"><span class="lbl">شرط ابطال ستاپ:</span> <span id="pred-inv">--</span></div>
+
+        <div class="pred-reason" id="pred-reason">--</div>
+
+        <div class="pred-warn" id="pred-warn"></div>
+
+        <div class="pred-note">⚠️ این پیش‌بینی صرفاً اطلاع‌رسانی است و هیچ معامله‌ای در متاتریدر انجام نمی‌شود. تصمیم اجرا و مسئولیت آن کاملاً با خودت است.</div>
+
+        <button class="pred-clear" onclick="clearPrediction()">پاک کردن این پیش‌بینی</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">تنظیمات ربات<span class="rule"></span></div>
+
+      <div class="mode-switch">
+        <button class="mode-btn manual on" id="mode-manual" onclick="setMode('manual')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg>
+          دستی
+        </button>
+        <button class="mode-btn auto" id="mode-auto" onclick="setMode('auto')">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>
+          خودران
+        </button>
+        <button class="mode-btn signal" id="mode-signal" onclick="setMode('signal')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>
+          فقط تحلیل
+        </button>
+      </div>
+
+      <div class="auto-warning" id="auto-warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5M12 16.5v.5"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span>حالت خودران فعال است؛ سیگنال‌های معتبر بدون تأیید شما اجرا می‌شوند.</span>
+      </div>
+
+      <div class="setting-row">
+        <div><div class="name">حجم بر اساس ریسک</div><div class="sub">محاسبه لات از درصد ریسک و فاصله SL</div></div>
+        <div class="toggle" id="tg-risk" onclick="toggleSetting('riskSizing')"><span class="knob"></span></div>
+      </div>
+      <div class="setting-row">
+        <div><div class="name">ریسک هر معامله</div><div class="sub">درصد از بالانس</div></div>
+        <input class="num-input" id="in-risk" onchange="numSetting('riskPercent', this)">
+      </div>
+      <div class="setting-row">
+        <div><div class="name">حداکثر پوزیشن همزمان</div></div>
+        <input class="num-input" id="in-maxpos" onchange="numSetting('maxPositions', this)">
+      </div>
+      <div class="setting-row">
+        <div><div class="name">حد ضرر روزانه</div><div class="sub">درصد؛ صفر یعنی خاموش</div></div>
+        <input class="num-input" id="in-dll" onchange="numSetting('dailyLossLimitPct', this)">
+      </div>
+      <div class="setting-row">
+        <div><div class="name">فاصله بین معاملات</div><div class="sub">دقیقه</div></div>
+        <input class="num-input" id="in-cool" onchange="numSetting('cooldownMinutes', this)">
+      </div>
+      <div class="setting-row">
+        <div><div class="name">انتقال به سربه‌سر</div><div class="sub">بعد از ۱R سود، SL به نقطه ورود</div></div>
+        <div class="toggle" id="tg-be" onclick="toggleSetting('breakEven')"><span class="knob"></span></div>
+      </div>
+      <div class="setting-row">
+        <div><div class="name">تریلینگ استاپ</div><div class="sub">دنبال‌کردن قیمت با فاصله مشخص</div></div>
+        <div class="toggle" id="tg-trail" onclick="toggleSetting('trailing')"><span class="knob"></span></div>
+      </div>
+      <div class="setting-row">
+        <div><div class="name">فاصله تریل</div><div class="sub">دلار</div></div>
+        <input class="num-input" id="in-trail" onchange="numSetting('trailDistance', this)">
+      </div>
+
+      <div class="settings-note">تغییرات بلافاصله ذخیره و اعمال می‌شوند</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">حجم معامله<span class="rule"></span></div>
+      <div class="lot-dial">
+        <button class="lot-step" onclick="stepLot(-0.01)">−</button>
+        <div class="lot-readout"><span class="num" id="lot-val">0.10</span></div>
+        <button class="lot-step" onclick="stepLot(0.01)">+</button>
+      </div>
+      <div class="lot-caption">لات ثابت — فقط وقتی «حجم بر اساس ریسک» خاموش است اعمال می‌شود</div>
+
+      <div class="run-row">
+        <button class="run-btn start" onclick="startBot()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          شروع
+        </button>
+        <button class="run-btn stop" onclick="stopBot()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+          توقف
+        </button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">عملکرد (۲۴ ساعت اخیر)<span class="rule"></span></div>
+      <div class="perf-grid">
+        <div class="perf-cell"><span class="lbl">معاملات بسته‌شده</span><span class="val" id="perf-trades">0</span></div>
+        <div class="perf-cell"><span class="lbl">نرخ برد</span><span class="val" id="perf-wr">--</span></div>
+        <div class="perf-cell"><span class="lbl">برد / باخت</span><span class="val" id="perf-wl">0 / 0</span></div>
+        <div class="perf-cell"><span class="lbl">سود / ضرر خالص</span><span class="val" id="perf-net">$0.00</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">لاگ سیستم<span class="rule"></span></div>
+      <div class="log-feed" id="logs"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const socket = io();
+
+  let settings = {
+    mode: 'manual',
+    volume: 0.10, riskSizing: true, riskPercent: 1.0,
+    maxPositions: 1, dailyLossLimitPct: 4, cooldownMinutes: 20,
+    breakEven: true, trailing: false, trailStartR: 1.5, trailDistance: 1.5,
+  };
+  let botActive = false;
+  let activeSignalId = null;
+  let lastSigDirection = null;
+  let ttlTimer = null;
+  let signalLines = [];
+  let predLines = [];
+
+  // ---------- chart ----------
+  const chartEl = document.getElementById('chart');
+  const chart = LightweightCharts.createChart(chartEl, {
+    width: chartEl.clientWidth, height: 420,
+    layout: { background: { color: '#1a1815' }, textColor: '#8c8577' },
+    grid: { vertLines: { color: '#2a2722' }, horzLines: { color: '#2a2722' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#3d3830' },
+    timeScale: { borderColor: '#3d3830', timeVisible: true, secondsVisible: false }
+  });
+  const candleSeries = chart.addCandlestickSeries({
+    upColor: '#2fa88c', downColor: '#b2453a',
+    borderUpColor: '#2fa88c', borderDownColor: '#b2453a',
+    wickUpColor: '#2fa88c', wickDownColor: '#b2453a'
+  });
+  window.addEventListener('resize', () => chart.applyOptions({ width: chartEl.clientWidth }));
+
+  // ---------- badge / mode ----------
+  function updateBadge(){
+    const badge = document.getElementById('status-badge');
+    const dot = document.getElementById('rec-dot');
+    if (!botActive) {
+      badge.textContent = 'غیرفعال';
+      badge.classList.remove('active');
+      dot.classList.remove('live');
+    } else if (settings.mode === 'auto') {
+      badge.textContent = 'خودران · فعال';
+      badge.classList.add('active');
+      dot.classList.add('live');
+    } else if (settings.mode === 'signal') {
+      badge.textContent = 'فقط تحلیل · فعال';
+      badge.classList.add('active');
+      dot.classList.add('live');
+    } else {
+      badge.textContent = 'دستی · فعال';
+      badge.classList.add('active');
+      dot.classList.add('live');
+    }
+  }
+
+  function applySettingsToUI(){
+    const s = settings;
+    document.getElementById('mode-manual').classList.toggle('on', s.mode === 'manual');
+    document.getElementById('mode-auto').classList.toggle('on', s.mode === 'auto');
+    document.getElementById('mode-signal').classList.toggle('on', s.mode === 'signal');
+    document.getElementById('auto-warning').classList.toggle('show', s.mode === 'auto');
+    document.getElementById('signal-only-note').classList.toggle('show', s.mode === 'signal');
+
+    // در حالت «فقط تحلیل» دکمه‌های اجرا حذف می‌شوند
+    document.getElementById('vault-actions').style.display = (s.mode === 'signal') ? 'none' : 'flex';
+
+    document.getElementById('tg-risk').classList.toggle('on', s.riskSizing);
+    document.getElementById('tg-be').classList.toggle('on', s.breakEven);
+    document.getElementById('tg-trail').classList.toggle('on', s.trailing);
+    document.getElementById('in-risk').value = s.riskPercent;
+    document.getElementById('in-maxpos').value = s.maxPositions;
+    document.getElementById('in-dll').value = s.dailyLossLimitPct;
+    document.getElementById('in-cool').value = s.cooldownMinutes;
+    document.getElementById('in-trail').value = s.trailDistance;
+    document.getElementById('lot-val').textContent = Number(s.volume).toFixed(2);
+    document.querySelectorAll('.lot-step').forEach((b) => { b.disabled = !!s.riskSizing; });
+
+    const canAct = (lastSigDirection === 'buy' || lastSigDirection === 'sell') && s.mode === 'manual';
+    document.getElementById('btn-approve').disabled = !canAct;
+    document.getElementById('btn-decline').disabled = !canAct;
+
+    if (s.mode !== 'manual') {
+      clearInterval(ttlTimer);
+      document.getElementById('sig-ttl-row').style.display = 'none';
+    }
+
+    updateBadge();
+  }
+
+  socket.on('settings', (s) => { settings = { ...settings, ...s }; applySettingsToUI(); });
+  socket.on('bot-status', (st) => { botActive = !!st.active; updateBadge(); });
+
+  // ---------- settings actions ----------
+  function saveSettings(patch){ socket.emit('update-settings', { ...settings, ...patch }); }
+  function toggleSetting(key){ saveSettings({ [key]: !settings[key] }); }
+  function numSetting(key, el){
+    const v = parseFloat(el.value);
+    if (!isNaN(v)) saveSettings({ [key]: v });
+  }
+  function setMode(mode){
+    if (mode === 'auto' && !confirm('در حالت خودران، سیگنال‌های معتبر بدون تأیید شما و به‌صورت خودکار در MT5 اجرا می‌شوند.\n\nقبل از حساب واقعی، حتماً روی دمو تستش کن. فعال کنیم؟')) return;
+    saveSettings({ mode });
+  }
+
+  function stepLot(delta){
+    if (settings.riskSizing) return;
+    const v = Math.max(0.01, Math.round((settings.volume + delta) * 100) / 100);
+    saveSettings({ volume: v });
+  }
+
+  function startBot(){ socket.emit('start-stream'); }
+  function stopBot(){ socket.emit('stop-stream'); }
+
+  // ---------- account / chart / positions ----------
+  socket.on('account-update', (data) => {
+    if (!data) return;
+    const fmt = (v) => (v === null || v === undefined) ? '—' : '$' + Number(v).toLocaleString();
+    document.getElementById('balance').textContent = fmt(data.balance);
+    document.getElementById('equity').textContent = fmt(data.equity);
+    document.getElementById('freeMargin').textContent = fmt(data.freeMargin);
+
+    const srcEl = document.getElementById('tk-src');
+    if (data.source === 'public') {
+      srcEl.textContent = 'عمومی';
+      srcEl.style.color = 'var(--gold-bright)';
+      srcEl.title = 'سیستم خونه خاموش است — قیمت از منبع عمومی';
+    } else if (data.source === 'bridge') {
+      srcEl.textContent = 'بریج خانه';
+      srcEl.style.color = '';
+      srcEl.title = 'متصل به MT5 از طریق سیستم خونه';
+    }
+
+    if (data.candles && data.candles.length) {
+      candleSeries.setData(data.candles);
+      chart.timeScale().fitContent();
+    }
+
+    if (data.bid) document.getElementById('tk-bid').textContent = data.bid;
+    if (data.ask) document.getElementById('tk-ask').textContent = data.ask;
+    const spreadEl = document.getElementById('tk-spread');
+    if (data.source === 'public') spreadEl.textContent = '--';
+    else if (data.bid && data.ask) spreadEl.textContent = (data.ask - data.bid).toFixed(2);
+
+    const posList = document.getElementById('positions-list');
+    if (data.positions && data.positions.length) {
+      posList.innerHTML = data.positions.map(p => `
+        <tr>
+          <td class="num">#${p.id}</td>
+          <td class="${p.type === 'BUY' ? 'side-buy' : 'side-sell'}">${p.type}</td>
+          <td class="num">${p.volume}</td>
+          <td class="num">${p.entry}</td>
+          <td class="num">${p.sl || '--'}</td>
+          <td class="num ${p.profit >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.profit > 0 ? '+' : ''}${p.profit}</td>
+          <td><button class="close-btn" onclick="closePosition(${p.id}, this)">بستن</button></td>
+        </tr>
+      `).join('');
+    } else if (data.source === 'public') {
+      posList.innerHTML = '<tr class="empty-row"><td colspan="7">سیستم معاملاتی خونه آفلاین است — تحلیل با داده عمومی فعال است</td></tr>';
+    } else {
+      posList.innerHTML = '<tr class="empty-row"><td colspan="7">پوزیشنی باز نیست</td></tr>';
+    }
+  });
+
+  // ---------- chart frame capture ----------
+  function captureFrame(el, timeframe){
+    if (typeof html2canvas === 'undefined') return;
+    html2canvas(el, { useCORS: true, logging: false, backgroundColor: '#1a1815' })
+      .then(canvas => socket.emit('chart-frame', { timeframe, data: canvas.toDataURL('image/jpeg') }))
+      .catch(() => {});
+  }
+  setInterval(() => captureFrame(chartEl, 'M15'), 12000);
+
+  // ---------- gauge + signal ----------
+  function setGauge(pct){
+    const clamped = Math.max(0, Math.min(100, pct));
+    const offset = 251 - (251 * clamped / 100);
+    document.getElementById('gauge-fill').setAttribute('stroke-dashoffset', offset);
+    document.getElementById('gauge-fill').setAttribute('stroke', clamped >= 65 ? 'var(--teal)' : clamped >= 40 ? 'var(--gold)' : 'var(--red)');
+    document.getElementById('needle').style.transform = `rotate(${-90 + (clamped / 100 * 180)}deg)`;
+    document.getElementById('conf-val').textContent = Math.round(clamped) + '%';
+  }
+
+  function drawSignalLines(sig){
+    signalLines.forEach((l) => candleSeries.removePriceLine(l));
+    signalLines = [];
+    if (!['buy', 'sell'].includes(sig.direction)) return;
+    const add = (price, color, title) => signalLines.push(candleSeries.createPriceLine({
+      price, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title,
+    }));
+    if (sig.entry) add(sig.entry, '#c9a227', 'ورود');
+    if (sig.stop_loss) add(sig.stop_loss, '#b2453a', 'SL');
+    if (sig.take_profit) add(sig.take_profit, '#2fa88c', 'TP');
+  }
+
+  function startTtl(expiresAt){
+    clearInterval(ttlTimer);
+    const row = document.getElementById('sig-ttl-row');
+    const val = document.getElementById('sig-ttl');
+    if (!expiresAt) { row.style.display = 'none'; return; }
+    row.style.display = 'flex';
+    const tick = () => {
+      const left = Math.max(0, expiresAt - Date.now());
+      const m = Math.floor(left / 60000);
+      const sec = Math.floor((left % 60000) / 1000);
+      val.textContent = `${m}:${String(sec).padStart(2, '0')}`;
+      if (left <= 0) {
+        clearInterval(ttlTimer);
+        activeSignalId = null;
+        document.getElementById('btn-approve').disabled = true;
+        document.getElementById('btn-decline').disabled = true;
+      }
+    };
+    tick();
+    ttlTimer = setInterval(tick, 1000);
+  }
+
+  socket.on('signal', (sig) => {
+    if (!sig) return;
+    activeSignalId = sig.id;
+    lastSigDirection = sig.direction;
+    setGauge((sig.confidence || 0) * 100);
+    drawSignalLines(sig);
+    startTtl((sig.direction === 'buy' || sig.direction === 'sell') && settings.mode === 'manual' ? sig.expiresAt : null);
+
+    const dirEl = document.getElementById('signal-dir');
+    const rrTxt = sig.rr ? ` · R/R ${sig.rr}` : '';
+    if (sig.direction === 'buy') { dirEl.textContent = 'خرید (BUY)' + rrTxt; dirEl.className = 'signal-dir buy'; }
+    else if (sig.direction === 'sell') { dirEl.textContent = 'فروش (SELL)' + rrTxt; dirEl.className = 'signal-dir sell'; }
+    else { dirEl.textContent = 'انتظار'; dirEl.className = 'signal-dir wait'; }
+
+    document.getElementById('sig-entry').textContent = sig.entry || '--';
+    document.getElementById('sig-sl').textContent = sig.stop_loss || '--';
+    document.getElementById('sig-tp').textContent = sig.take_profit || '--';
+    document.getElementById('sig-reason').textContent = sig.reason || '';
+
+    const canAct = (sig.direction === 'buy' || sig.direction === 'sell') && settings.mode === 'manual';
+    document.getElementById('btn-approve').disabled = !canAct;
+    document.getElementById('btn-decline').disabled = !canAct;
+  });
+
+  function respondSignal(action){
+    if (!activeSignalId) return;
+    socket.emit('signal-response', { id: activeSignalId, action, volume: settings.volume });
+    document.getElementById('btn-approve').disabled = true;
+    document.getElementById('btn-decline').disabled = true;
+    addLog(action === 'approve' ? 'سیگنال تأیید شد، در حال ارسال به MT5...' : 'سیگنال رد شد.');
+  }
+
+  function closePosition(id, btn){
+    if (!confirm(`پوزیشن #${id} به‌صورت دستی بسته بشه؟`)) return;
+    btn.disabled = true;
+    btn.textContent = 'در حال بستن...';
+    socket.emit('close-position', { id });
+    addLog(`درخواست بستن دستی پوزیشن #${id} ارسال شد...`);
+  }
+
+  // ---------- prediction (فقط نمایش، بدون اجرا) ----------
+  function requestPrediction(){ socket.emit('request-prediction'); }
+
+  socket.on('prediction-status', (st) => {
+    const btn = document.getElementById('btn-predict');
+    const label = btn.querySelector('span');
+    btn.disabled = !!st.busy;
+    label.textContent = st.busy ? 'در حال تحلیل عمیق...' : 'جست‌وجوی ستاپ پر سود';
+  });
+
+  function drawPredictionLines(p){
+    predLines.forEach((l) => candleSeries.removePriceLine(l));
+    predLines = [];
+    if (!p || !['buy', 'sell'].includes(p.direction)) return;
+    const add = (price, color, title, style) => predLines.push(candleSeries.createPriceLine({
+      price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title,
+    }));
+    if (p.entry) add(p.entry, '#e8c468', 'ورود (پیش‌بینی)', LightweightCharts.LineStyle.Solid);
+    if (p.stop_loss) add(p.stop_loss, '#b2453a', 'SL (پیش‌بینی)', LightweightCharts.LineStyle.Dashed);
+    if (p.take_profit) add(p.take_profit, '#2fa88c', 'TP (پیش‌بینی)', LightweightCharts.LineStyle.Dashed);
+    if (p.tp2) add(p.tp2, '#2fa88c', 'TP2', LightweightCharts.LineStyle.Dotted);
+  }
+
+  socket.on('prediction', (p) => {
+    if (!p) return;
+    if (p.error) { showToast('danger', p.error); return; }
+
+    document.getElementById('pred-empty').style.display = 'none';
+    document.getElementById('pred-body').style.display = 'block';
+
+    const dirEl = document.getElementById('pred-dir');
+    const tradeable = ['buy', 'sell'].includes(p.direction);
+
+    if (!tradeable) {
+      dirEl.textContent = 'ستاپ پر سودی پیدا نشد';
+      dirEl.className = 'pred-dir wait';
+      ['pred-entry','pred-sl','pred-tp','pred-tp2','pred-rr','pred-conf'].forEach((id) => {
+        document.getElementById(id).textContent = '--';
+      });
+      document.getElementById('pred-type').textContent = '—';
+      document.getElementById('pred-dur').textContent = '—';
+      document.getElementById('pred-inv').textContent = '—';
+      document.getElementById('pred-reason').textContent = p.reason || 'مدل ستاپ باکیفیتی در چارت فعلی پیدا نکرد.';
+      document.getElementById('pred-warn').classList.remove('show');
+      drawPredictionLines(null);
+      return;
+    }
+
+    dirEl.textContent = p.direction === 'buy' ? 'پیش‌بینی: خرید (BUY)' : 'پیش‌بینی: فروش (SELL)';
+    dirEl.className = 'pred-dir ' + p.direction;
+
+    document.getElementById('pred-entry').textContent = p.entry;
+    document.getElementById('pred-sl').textContent = p.stop_loss;
+    document.getElementById('pred-tp').textContent = p.take_profit;
+    document.getElementById('pred-tp2').textContent = p.tp2 || '--';
+    document.getElementById('pred-rr').textContent = '1:' + p.rr;
+    document.getElementById('pred-conf').textContent = Math.round((p.confidence || 0) * 100) + '%';
+    document.getElementById('pred-type').textContent = p.entry_type === 'pullback'
+      ? 'پولبک به ناحیه ورود (سفارش لیمیت)'
+      : 'قیمت فعلی (ورود فوری)';
+    document.getElementById('pred-dur').textContent = p.expected_duration || '—';
+    document.getElementById('pred-inv').textContent = p.invalidation || '—';
+    document.getElementById('pred-reason').textContent = p.reason || '';
+
+    const warn = document.getElementById('pred-warn');
+    if (p.belowThreshold) {
+      warn.textContent = `اطمینان این ستاپ (${Math.round((p.confidence || 0) * 100)}٪) زیر آستانه سیگنال‌های اجرایی است — با احتیاط بیشتری بررسیش کن.`;
+      warn.classList.add('show');
+    } else {
+      warn.classList.remove('show');
+    }
+
+    drawPredictionLines(p);
+    showToast('success', 'پیش‌بینی جدید آماده است — فقط نمایش، بدون اجرا.');
+  });
+
+  function clearPrediction(){
+    drawPredictionLines(null);
+    document.getElementById('pred-body').style.display = 'none';
+    document.getElementById('pred-empty').style.display = 'block';
+  }
+
+  // ---------- performance ----------
+  socket.on('performance', (p) => {
+    document.getElementById('perf-trades').textContent = p.trades;
+    document.getElementById('perf-wl').textContent = `${p.wins} / ${p.losses}`;
+    document.getElementById('perf-wr').textContent = (p.winRate === null || p.winRate === undefined) ? '--' : p.winRate + '%';
+    const net = document.getElementById('perf-net');
+    net.textContent = (p.net >= 0 ? '+$' : '-$') + Math.abs(p.net).toFixed(2);
+    net.style.color = p.net >= 0 ? 'var(--teal)' : 'var(--red)';
+  });
+
+  // ---------- toasts ----------
+  function showToast(level, message){
+    const wrap = document.getElementById('toasts');
+    const t = document.createElement('div');
+    t.className = 'toast ' + (level || '');
+    t.textContent = message;
+    wrap.appendChild(t);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 350); }, 6500);
+  }
+  socket.on('alert', (a) => { if (a && a.message) showToast(a.level, a.message); });
+
+  // ---------- logs ----------
+  function addLog(message){
+    const logs = document.getElementById('logs');
+    const time = new Date().toLocaleTimeString('fa-IR');
+    const row = document.createElement('div');
+    row.innerHTML = `<span class="t">[${time}]</span> ${message}`;
+    logs.appendChild(row);
+    logs.scrollTop = logs.scrollHeight;
+  }
+  socket.on('new-log', (log) => addLog(log.message));
+
+  socket.on('daily-stats', (stats) => {
+    document.getElementById('tk-daily').textContent = `${stats.count}/${stats.max}`;
+  });
+
+  applySettingsToUI();
+</script>
+</body>
+</html>
