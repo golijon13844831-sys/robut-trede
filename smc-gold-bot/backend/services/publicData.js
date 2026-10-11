@@ -3,9 +3,11 @@
 // وقتی سیستم خونه (و MT5) خاموشه، قیمت و کندل از این‌جا میاد.
 // نکته: قیمت این منبع اسپات جهانیه و ممکنه چند ده‌سنت با بروکرت فرق کنه.
 // =========================================================================
-
 const YF_BASE = 'https://query1.finance.yahoo.com';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+
+// نماد طلا: GC=F (Gold Futures) — XAUUSD=X دیگه کار نمی‌کنه
+const SYMBOL = 'GC=F';
 
 const TF_MAP = {
   M5:  { interval: '5m',  range: '3d' },
@@ -13,9 +15,8 @@ const TF_MAP = {
   H1:  { interval: '1h',  range: '15d' },
   D1:  { interval: '1d',  range: '30d' },
 };
-
-const CACHE_TTL_MS = 60 * 1000; // هر تایم‌فریم حداکثر یک‌بار در دقیقه از یاهو گرفته بشه
-const cache = new Map(); // tf -> { at, candles }
+const CACHE_TTL_MS = 60 * 1000;
+const cache = new Map();
 
 async function fetchCandles(timeframe, count) {
   const cfg = TF_MAP[timeframe];
@@ -27,7 +28,7 @@ async function fetchCandles(timeframe, count) {
   }
 
   const res = await fetch(
-    `${YF_BASE}/v8/finance/chart/XAUUSD=X?interval=${cfg.interval}&range=${cfg.range}`,
+    `${YF_BASE}/v8/finance/chart/${SYMBOL}?interval=${cfg.interval}&range=${cfg.range}`,
     { headers: HEADERS }
   );
   if (!res.ok) throw new Error(`منبع عمومی خطا داد (${res.status})`);
@@ -36,8 +37,8 @@ async function fetchCandles(timeframe, count) {
   const r = json?.chart?.result?.[0];
   const ts = r?.timestamp || [];
   const q = r?.indicators?.quote?.[0] || {};
-
   const candles = [];
+
   for (let i = 0; i < ts.length; i++) {
     const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i];
     if (o == null || h == null || l == null || c == null) continue;
@@ -45,7 +46,6 @@ async function fetchCandles(timeframe, count) {
   }
 
   if (!candles.length) throw new Error('منبع عمومی کندل برنگرداند');
-
   cache.set(timeframe, { at: Date.now(), candles });
   return candles.slice(-count);
 }
